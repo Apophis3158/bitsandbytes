@@ -1,6 +1,7 @@
 import dataclasses
 from functools import lru_cache
 import logging
+import platform
 import re
 import subprocess
 from typing import Optional
@@ -83,10 +84,12 @@ def get_rocm_gpu_arch() -> str:
     logger = logging.getLogger(__name__)
     try:
         if torch.version.hip:
-            result = subprocess.run(["rocminfo"], capture_output=True, text=True)
-            match = re.search(r"Name:\s+gfx([a-zA-Z\d]+)", result.stdout)
+            # On Windows, use hipinfo.exe; on Linux, use rocminfo
+            cmd = ["rocminfo"] if platform.system() != "Windows" else ["hipinfo.exe"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            match = re.search(r"Name:\s+(gfx[a-zA-Z\d]+)", result.stdout)
             if match:
-                return "gfx" + match.group(1)
+                return match.group(1)
             else:
                 return "unknown"
         else:
@@ -107,8 +110,17 @@ def get_rocm_warpsize() -> int:
     logger = logging.getLogger(__name__)
     try:
         if torch.version.hip:
-            result = subprocess.run(["rocminfo"], capture_output=True, text=True)
-            match = re.search(r"Wavefront Size:\s+([0-9]{2})\(0x[0-9]{2}\)", result.stdout)
+            # Linux [Wavefront Size: 32(0x20)]; Windows [warpSize: 32]
+            # On Windows, use hipinfo.exe; on Linux, use rocminfo
+            if platform.system() == "Windows":
+                cmd = ["hipinfo.exe"]
+                pattern = r"warpSize:\s+(\d+)"
+            else:
+                cmd = ["rocminfo"]
+                pattern = r"Wavefront Size:\s+([0-9]{2})\(0x[0-9]{2}\)"
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            match = re.search(pattern, result.stdout)
             if match:
                 return int(match.group(1))
             else:
