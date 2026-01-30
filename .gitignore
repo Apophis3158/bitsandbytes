@@ -27,6 +27,7 @@ cmake-build-*/
 # IDE local files
 .vs/
 .idea/
+.vscode/
 
 # Distribution / packaging
 .Python
