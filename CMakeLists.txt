@@ -13,12 +13,13 @@
 cmake_minimum_required(VERSION 3.22.1)
 
 if(WIN32 AND COMPUTE_BACKEND STREQUAL "hip")
+    # Support Windows ROCm SDK for 7.2, HIP SDK only 7.1
     find_program(ROCM_SDK_EXE rocm-sdk)
     if(DEFINED ENV{ROCM_PATH})
         set(ROCM_PATH $ENV{ROCM_PATH})
         message(STATUS "Found ROCM_PATH from environment: ${ROCM_PATH}")
     elseif(ROCM_SDK_EXE)
-        execute_process(COMMAND ${ROCM_SDK_EXE} path --root OUTPUT_VARIABLE ROCM_PATH)
+        execute_process(COMMAND ${ROCM_SDK_EXE} path --root OUTPUT_VARIABLE ROCM_PATH OUTPUT_STRIP_TRAILING_WHITESPACE)
         message(STATUS "Found ROCM_PATH from rocm-sdk: ${ROCM_PATH}")
     elseif(DEFINED ENV{HIP_PATH})
         set(ROCM_PATH $ENV{HIP_PATH})
@@ -36,6 +37,7 @@ if(WIN32 AND COMPUTE_BACKEND STREQUAL "hip")
         endif()
     endif()
 
+    # Fix when using ROCm SDK but CXX compiler detected as HIP SDK
     if(NOT CMAKE_CXX_COMPILER AND ROCM_PATH)
         find_program(ROCM_CLANG_COMPILER
             NAMES clang++ amdclang++
@@ -46,19 +48,6 @@ if(WIN32 AND COMPUTE_BACKEND STREQUAL "hip")
             set(CMAKE_CXX_COMPILER "${ROCM_CLANG_COMPILER}")
             message(STATUS "Set CXX compiler to: ${CMAKE_CXX_COMPILER}")
         endif()
-    endif()
-
-    find_path(ROCM_DEVICE_LIB_PATH
-        NAMES hip.bc
-        PATHS 
-            "${ROCM_PATH}/lib/llvm/amdgcn/bitcode"
-            "${ROCM_PATH}/amdgcn/bitcode"
-    )
-
-    if(ROCM_DEVICE_LIB_PATH)
-        message(STATUS "Found ROCm device library path: ${ROCM_DEVICE_LIB_PATH}")
-        set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} --rocm-device-lib-path=\"${ROCM_DEVICE_LIB_PATH}\"")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --rocm-device-lib-path=\"${ROCM_DEVICE_LIB_PATH}\"")
     endif()
 
     project(bitsandbytes LANGUAGES CXX HIP)
@@ -88,48 +77,27 @@ set(COMPUTE_BACKEND "cpu" CACHE STRING "The compute backend to use (cpu, cuda, h
 set_property(CACHE COMPUTE_BACKEND PROPERTY STRINGS cpu cuda hip mps xpu)
 option(PTXAS_VERBOSE "Pass through -v flag to PTX Assembler" OFF)
 
-if(APPLE)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0)
-endif()
-
 set(BNB_OUTPUT_NAME "bitsandbytes")
 
 message(STATUS "Configuring ${PROJECT_NAME} (Backend: ${COMPUTE_BACKEND})")
 
-if(${COMPUTE_BACKEND} STREQUAL "cuda")
-    if(APPLE)
-        message(FATAL_ERROR "CUDA is not supported on macOS" )
+# cursed codes
+if(APPLE)
+    if(${COMPUTE_BACKEND} AND NOT ${COMPUTE_BACKEND} STREQUAL "cpu")
+        message(FATAL_ERROR "${COMPUTE_BACKEND} is not supported on macOS" )
+    else()
+        set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0)
+        set(BUILD_CPU ON)
     endif()
+elseif(${COMPUTE_BACKEND} STREQUAL "cuda")
     set(BUILD_CUDA ON)
-    set(BUILD_HIP OFF)
-    set(BUILD_MPS OFF)
 elseif(${COMPUTE_BACKEND} STREQUAL "hip")
-    if(APPLE)
-        message(FATAL_ERROR "HIP is not supported on macOS" )
-    endif()
-    set(BUILD_CUDA OFF)
     set(BUILD_HIP ON)
-    set(BUILD_MPS OFF)
 elseif(${COMPUTE_BACKEND} STREQUAL "mps")
-    if(NOT APPLE)
-        message(FATAL_ERROR "MPS is only supported on macOS" )
-    endif()
-    set(BUILD_CUDA OFF)
-    set(BUILD_HIP OFF)
     set(BUILD_MPS ON)
 elseif(${COMPUTE_BACKEND} STREQUAL "xpu")
-    if(APPLE)
-        message(FATAL_ERROR "XPU is not supported on macOS" )
-    endif()
-    set(BUILD_CUDA OFF)
-    set(BUILD_HIP OFF)
-    set(BUILD_MPS OFF)
     set(BUILD_XPU ON)
 else()
-    set(BUILD_CUDA OFF)
-    set(BUILD_HIP OFF)
-    set(BUILD_MPS OFF)
-    set(BUILD_XPU OFF)
     set(BUILD_CPU ON)
 endif()
 
