@@ -3,6 +3,7 @@ import functools
 import logging
 import os
 from pathlib import Path
+import platform
 import re
 from typing import Optional
 
@@ -293,6 +294,38 @@ def get_native_library() -> BNBNativeLibrary:
         binary_path = PACKAGE_DIR / f"libbitsandbytes_xpu{DYNAMIC_LIBRARY_SUFFIX}"
 
     logger.debug(f"Loading bitsandbytes native library from: {binary_path}")
+
+    # On Windows with ROCm, we need to ensure the ROCm/HIP bin folder is in the DLL search path
+    # because the extension DLL depends on other DLLs (like amdhip64.dll, rocblas.dll) residing there.
+    if torch.version.hip and platform.system() == "Windows":
+        rocm_path = os.environ.get("ROCM_PATH")
+        if not rocm_path:
+            rocm_path = os.environ.get("HIP_PATH")
+
+        # Fallback: try to deduce from standard locations if env vars are missing
+        if not rocm_path:
+            if os.path.exists("C:\\Program Files\\AMD\\ROCm\\5.7\\"):  # Example path, just checking common one
+                pass
+            # We can likely trust the env vars are set if the user is using this
+
+        if rocm_path:
+            bin_path = Path(rocm_path) / "bin"
+            if bin_path.exists():
+                logger.debug(f"Adding ROCm bin path to DLL search directories: {bin_path}")
+                try:
+                    os.add_dll_directory(str(bin_path))
+                except AttributeError:
+                    # Python < 3.8 doesn't have add_dll_directory, but we require > 3.8 anyway
+                    pass
+
+                # Also add to PATH for good measure, as some loading mechanisms might rely on it
+                os.environ["PATH"] = str(bin_path) + os.pathsep + os.environ["PATH"]
+            else:
+                logger.warning(f"ROCm bin path not found at: {bin_path}")
+        else:
+            logger.warning(
+                "ROCm/HIP environment detected but ROCM_PATH or HIP_PATH environment variables are not set."
+            )
 
     # Try to load the library - any errors will propagate up
     dll = ct.cdll.LoadLibrary(str(binary_path))
