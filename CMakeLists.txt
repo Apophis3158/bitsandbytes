@@ -12,25 +12,53 @@
 #  - PTXAS_VERBOSE: Pass the `-v` option to the PTX Assembler
 cmake_minimum_required(VERSION 3.22.1)
 
-# Firstly ensure build with AMD HIP SDK for Windows
 if(WIN32 AND COMPUTE_BACKEND STREQUAL "hip")
-    if(DEFINED ENV{HIP_PATH})
-        file(TO_CMAKE_PATH $ENV{HIP_PATH} ROCM_PATH)
-        message(STATUS "Using HIP PATH: ${ROCM_PATH}")
+    find_program(ROCM_SDK_EXE rocm-sdk)
+    if(DEFINED ENV{ROCM_PATH})
+        set(ROCM_PATH $ENV{ROCM_PATH})
+        message(STATUS "Found ROCM_PATH from environment: ${ROCM_PATH}")
+    elseif(ROCM_SDK_EXE)
+        execute_process(COMMAND ${ROCM_SDK_EXE} path --root OUTPUT_VARIABLE ROCM_PATH)
+        message(STATUS "Found ROCM_PATH from rocm-sdk: ${ROCM_PATH}")
+    elseif(DEFINED ENV{HIP_PATH})
+        set(ROCM_PATH $ENV{HIP_PATH})
+        message(STATUS "Found HIP_PATH from environment: ${ROCM_PATH}")
+    else()
+        message(FATAL_ERROR "ROCM_PATH not found. Please set ROCM_PATH environment variable or ensure rocm-sdk is in PATH.")
     endif()
 
     # Fix: CMAKE_HIP_ARCHITECTURES detected by HIP on Windows is default gfx906
     if(WIN32 AND NOT DEFINED BNB_ROCM_ARCH AND NOT DEFINED AMDGPU_TARGETS AND NOT DEFINED CMAKE_HIP_ARCHITECTURES)
-        execute_process(
-            COMMAND hipinfo
-            OUTPUT_VARIABLE HIPINFO_OUTPUT
-            ERROR_QUIET
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-        )
+        execute_process(COMMAND hipinfo OUTPUT_VARIABLE HIPINFO_OUTPUT)
         if(HIPINFO_OUTPUT MATCHES "gcnArchName:[ \t]*([a-z0-9]+)")
             set(CMAKE_HIP_ARCHITECTURES "${CMAKE_MATCH_1}")
             message(STATUS "Auto-detected HIP architecture: ${CMAKE_HIP_ARCHITECTURES}")
         endif()
+    endif()
+
+    if(NOT CMAKE_CXX_COMPILER AND ROCM_PATH)
+        find_program(ROCM_CLANG_COMPILER
+            NAMES clang++ amdclang++
+            PATHS "${ROCM_PATH}/lib/llvm/bin" "${ROCM_PATH}/bin"
+            NO_DEFAULT_PATH
+        )
+        if(ROCM_CLANG_COMPILER)
+            set(CMAKE_CXX_COMPILER "${ROCM_CLANG_COMPILER}")
+            message(STATUS "Set CXX compiler to: ${CMAKE_CXX_COMPILER}")
+        endif()
+    endif()
+
+    find_path(ROCM_DEVICE_LIB_PATH
+        NAMES hip.bc
+        PATHS 
+            "${ROCM_PATH}/lib/llvm/amdgcn/bitcode"
+            "${ROCM_PATH}/amdgcn/bitcode"
+    )
+
+    if(ROCM_DEVICE_LIB_PATH)
+        message(STATUS "Found ROCm device library path: ${ROCM_DEVICE_LIB_PATH}")
+        set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} --rocm-device-lib-path=\"${ROCM_DEVICE_LIB_PATH}\"")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --rocm-device-lib-path=\"${ROCM_DEVICE_LIB_PATH}\"")
     endif()
 
     project(bitsandbytes LANGUAGES CXX HIP)
